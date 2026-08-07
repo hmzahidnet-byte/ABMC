@@ -1,0 +1,58 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Locate project (zip upload or already-unzipped repo)
+        id: locate
+        run: |
+          if [ -f "settings.gradle.kts" ] && [ -f "gradlew" ]; then
+            echo "Project files found directly in the repo root — using as-is."
+            echo "projdir=." >> "$GITHUB_OUTPUT"
+          else
+            ZIPFILE=$(ls -t ./*.zip 2>/dev/null | head -n 1)
+            if [ -z "$ZIPFILE" ]; then
+              echo "::error::No project found. Upload the ABM ERP zip to the repo root and commit, or push the project files directly."
+              exit 1
+            fi
+            echo "Found $ZIPFILE — extracting…"
+            mkdir -p extracted
+            unzip -q "$ZIPFILE" -d extracted
+            if [ ! -f "extracted/settings.gradle.kts" ]; then
+              echo "::error::$ZIPFILE did not contain settings.gradle.kts at its top level — check the zip wasn't double-wrapped in an extra folder."
+              exit 1
+            fi
+            echo "projdir=extracted" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle 8.7
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Build debug APK
+        working-directory: ${{ steps.locate.outputs.projdir }}
+        run: gradle assembleDebug --stacktrace --no-daemon
+
+      - name: Upload debug APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: abm-erp-debug-apk
+          path: ${{ steps.locate.outputs.projdir }}/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
